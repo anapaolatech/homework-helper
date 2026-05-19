@@ -611,8 +611,11 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
   const [askGrade,    setAskGrade]    = useState(2);
   const [askQuestion, setAskQuestion] = useState('');
   const [askOpen,     setAskOpen]     = useState(false);
+  const [photoMode,   setPhotoMode]   = useState(false);
   const [image,       setImage]       = useState(null); // { base64, mimeType, preview }
-  const fileRef = useRef(null);
+  const [photoGrade,  setPhotoGrade]  = useState(2);
+  const fileRef      = useRef(null);
+  const photoFileRef = useRef(null);
 
   const handleImagePick = (e) => {
     const file = e.target.files[0];
@@ -621,6 +624,8 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
     reader.onload = (ev) => {
       const dataUrl = ev.target.result;
       setImage({ base64: dataUrl.split(',')[1], mimeType: file.type, preview: dataUrl });
+      setPhotoMode(true);
+      setAskOpen(false);
     };
     reader.readAsDataURL(file);
   };
@@ -631,6 +636,12 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
     onAsk({ gradeIndex: askGrade, question: askQuestion.trim(), image });
   };
 
+  const handlePhotoSubmit = () => {
+    if (!image) return;
+    if (!apiKey) { onSetupKey(); return; }
+    onAsk({ gradeIndex: photoGrade, question: '', image });
+  };
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
@@ -639,6 +650,56 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
         <div className="text-center mt-4 mb-6 fade-up">
           <p className="text-gray-500 text-sm">Pick your child's grade to get started —<br/>no sign-up needed.</p>
         </div>
+
+        {/* ── PHOTO HOMEWORK BUTTON ── */}
+        <input ref={photoFileRef} type="file" accept="image/*" capture="environment"
+          onChange={handleImagePick} className="hidden" />
+
+        {!photoMode && (
+          <button onClick={() => photoFileRef.current.click()}
+            className="w-full bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white rounded-2xl p-5 flex items-center gap-4 shadow-md mb-4 fade-up transition-all">
+            <div className="bg-white bg-opacity-30 rounded-xl p-3 flex-shrink-0">
+              <span className="text-3xl">📷</span>
+            </div>
+            <div className="text-left">
+              <p className="font-bold text-lg leading-tight">Photo of Homework</p>
+              <p className="text-amber-100 text-sm">Snap a pic → get a step-by-step guide</p>
+            </div>
+            <span className="ml-auto text-white text-xl opacity-70">›</span>
+          </button>
+        )}
+
+        {photoMode && image && (
+          <div className="bg-white rounded-2xl border-2 border-amber-300 p-5 shadow-md mb-4 fade-up">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2"><span>📷</span> Homework Photo</h2>
+              <button onClick={() => { setPhotoMode(false); setImage(null); }}
+                className="text-gray-300 hover:text-gray-500 text-lg leading-none">×</button>
+            </div>
+            <div className="relative mb-4">
+              <img src={image.preview} alt="Homework" className="w-full rounded-xl border-2 border-amber-100 object-contain max-h-56" />
+              <button onClick={() => photoFileRef.current.click()}
+                className="absolute bottom-2 right-2 bg-white border border-gray-200 rounded-full px-3 py-1 text-xs text-gray-500 hover:text-amber-600 shadow font-semibold">
+                Change photo
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-2">Which grade?</p>
+            <div className="flex gap-1.5 flex-wrap mb-4">
+              {GRADES.map((g, i) => (
+                <button key={i} onClick={() => setPhotoGrade(i)}
+                  className={'px-2.5 py-1 rounded-full text-xs font-bold border-2 transition-all ' + (photoGrade === i ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300')}>
+                  {g.short}
+                </button>
+              ))}
+            </div>
+            <button onClick={handlePhotoSubmit}
+              className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2">
+              <span>✨</span>
+              {!apiKey ? 'Get step-by-step guide (free setup required)' : 'Get step-by-step guide'}
+            </button>
+            {!apiKey && <p className="text-center text-xs text-gray-400 mt-2">Takes 2 minutes to set up — we'll walk you through it</p>}
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-3 mb-8 fade-up">
           {GRADES.map((g, i) => (
@@ -685,35 +746,18 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
                 </button>
               ))}
             </div>
-            {/* Photo upload */}
+            {/* Photo upload inside ask panel */}
             <input ref={fileRef} type="file" accept="image/*" capture="environment"
               onChange={handleImagePick} className="hidden" />
-
-            {image ? (
-              <div className="relative mb-3">
-                <img src={image.preview} alt="Homework" className="w-full rounded-xl border-2 border-amber-200 object-contain max-h-52" />
-                <button onClick={() => setImage(null)}
-                  className="absolute top-2 right-2 bg-white border border-gray-200 rounded-full w-7 h-7 flex items-center justify-center text-gray-500 hover:text-red-500 shadow text-sm">
-                  ×
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => fileRef.current.click()}
-                className="w-full border-2 border-dashed border-gray-200 hover:border-amber-300 rounded-xl py-4 flex flex-col items-center gap-1 text-gray-400 hover:text-amber-600 transition-colors mb-3">
-                <span className="text-2xl">📷</span>
-                <span className="text-xs font-semibold">Take a photo of the homework</span>
-                <span className="text-xs opacity-70">or tap to choose a picture from your phone</span>
-              </button>
-            )}
 
             <textarea
               value={askQuestion}
               onChange={e => setAskQuestion(e.target.value)}
-              placeholder={image ? 'Optional: add any extra context (e.g. "we covered this in chapter 3")' : 'e.g. "How do I multiply fractions?" or "What is the area model for 23 × 14?"'}
+              placeholder='e.g. "How do I multiply fractions?" or "What is the area model for 23 × 14?"'
               rows="2"
               className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-amber-400 focus:outline-none resize-none transition-colors mb-3"
             />
-            <button onClick={handleAsk} disabled={!askQuestion.trim() && !image}
+            <button onClick={handleAsk} disabled={!askQuestion.trim()}
               className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold py-3 rounded-xl transition-colors">
               {!apiKey ? 'Get explanation (free setup required)' : 'Get explanation'}
             </button>
