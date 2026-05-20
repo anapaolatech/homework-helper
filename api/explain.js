@@ -36,24 +36,26 @@ module.exports = async function handler(req, res) {
 
   const { credential, gradeIndex, question, image } = req.body || {};
 
-  if (!credential) return res.status(401).json({ error: 'REAUTH' });
+  const googleClientId = process.env.GOOGLE_CLIENT_ID;
+  const googleConfigured = googleClientId && googleClientId !== 'placeholder';
 
-  // Verify Google ID token
-  try {
-    const tokenRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
-    );
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok || tokenData.error || !tokenData.sub) {
+  if (googleConfigured) {
+    if (!credential) return res.status(401).json({ error: 'REAUTH' });
+    // Verify Google ID token
+    try {
+      const tokenRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+      );
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || tokenData.error || !tokenData.sub) {
+        return res.status(401).json({ error: 'REAUTH' });
+      }
+      if (tokenData.aud !== googleClientId) {
+        return res.status(401).json({ error: 'REAUTH' });
+      }
+    } catch {
       return res.status(401).json({ error: 'REAUTH' });
     }
-    // Verify the token was issued for our app
-    const expectedClientId = process.env.GOOGLE_CLIENT_ID;
-    if (expectedClientId && tokenData.aud !== expectedClientId) {
-      return res.status(401).json({ error: 'REAUTH' });
-    }
-  } catch {
-    return res.status(401).json({ error: 'REAUTH' });
   }
 
   // Build Gemini request parts

@@ -756,8 +756,18 @@ function App() {
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
-      .then(d => { if (d.googleClientId) setGoogleClientId(d.googleClientId); })
-      .catch(() => {});
+      .then(d => {
+        const id = d.googleClientId;
+        if (id && id !== 'placeholder') {
+          setGoogleClientId(id);
+        } else {
+          // Google not configured yet — treat everyone as signed in
+          setUser('__no_auth__');
+        }
+      })
+      .catch(() => {
+        // Backend unreachable locally — still allow browsing topics
+      });
   }, []);
 
   const handleSignedIn = (credential) => {
