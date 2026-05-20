@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     @keyframes fade-up {
       from { opacity: 0; transform: translateY(14px); }
@@ -29,7 +30,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useRef } = React;
+const { useState, useRef, useEffect } = React;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTENT  (pre-written — no API needed)
@@ -372,71 +373,19 @@ const TOPICS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLAUDE API
+// AI API  (calls our Vercel backend — no API key needed by the parent)
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a warm, patient math homework companion sitting at the kitchen table with a family. Your job is to bridge the gap between how children are taught math today and how their parents' generation learned it.
-
-If an image is provided, read the homework problem from the image carefully before responding.
-
-Respond ONLY with a single valid JSON object — no markdown, no code fences, no extra text.
-
-Required shape:
-{
-  "title": "Short topic name (5 words or less)",
-  "emoji": "One relevant emoji",
-  "child": "Clear, friendly explanation using the MODERN method used in schools today. Appropriate for the grade level. Speak directly to the child. Use line breaks for readability.",
-  "parent": "Explanation using the TRADITIONAL method the parent's generation likely used. Acknowledge kindly that things look different now. Bridge both approaches.",
-  "example": {
-    "problem": "A clear worked example problem",
-    "steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
-    "answer": "The final answer"
-  },
-  "practice": [
-    { "problem": "Practice problem 1", "answer": "Answer 1" },
-    { "problem": "Practice problem 2", "answer": "Answer 2" },
-    { "problem": "Practice problem 3", "answer": "Answer 3" }
-  ]
-}
-
-If the question is not about school math, return: { "error": "I can only help with math homework!" }`;
-
-const GRADE_NAMES = ['Kindergarten','1st grade','2nd grade','3rd grade','4th grade','5th grade','6th grade','7th grade','8th grade'];
-
-async function askClaude({ apiKey, gradeIndex, question, image }) {
-  const textPart = {
-    type: 'text',
-    text: `Grade: ${GRADE_NAMES[gradeIndex]}\nQuestion: ${question || 'Please read the homework problem in the image and help us understand it.'}`,
-  };
-
-  const content = image
-    ? [{ type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.base64 } }, textPart]
-    : [textPart];
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+async function callExplainAPI({ credential, gradeIndex, question, image }) {
+  const res = await fetch('/api/explain', {
     method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential, gradeIndex, question, image }),
   });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message || `Error ${res.status} — check your API key`);
-  }
-
   const data = await res.json();
-  const parsed = JSON.parse(data.content[0].text);
-  if (parsed.error) throw new Error(parsed.error);
-  return parsed;
+  if (res.status === 401 || data?.error === 'REAUTH') throw new Error('REAUTH');
+  if (!res.ok) throw new Error(data?.error || `Error ${res.status}`);
+  if (data.error) throw new Error(data.error);
+  return data;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -530,75 +479,45 @@ function ExplanationCards({ topic, onBack }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API KEY MODAL  (parent-friendly, no jargon)
+// GOOGLE SIGN-IN MODAL
 // ─────────────────────────────────────────────────────────────────────────────
-function ApiKeyModal({ onSave, onClose }) {
-  const [step, setStep] = useState('intro');
-  const [key,  setKey]  = useState('');
-  const valid = key.trim().startsWith('sk-ant');
+function GoogleSignInModal({ googleClientId, onSignedIn, onClose }) {
+  const btnRef = useRef(null);
 
-  if (step === 'intro') return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full fade-up">
-        <div className="text-4xl text-center mb-3">✨</div>
-        <h2 className="text-lg font-bold text-gray-800 text-center mb-2">Unlock "Ask Claude"</h2>
-        <p className="text-gray-500 text-sm text-center mb-5 leading-relaxed">
-          This feature lets you type <em>any</em> math question and get a full explanation. It takes about 2 minutes to set up and it's free.
-        </p>
-        <div className="space-y-3 mb-6">
-          <div className="flex gap-3 items-start">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-amber-500 text-white text-sm font-bold flex items-center justify-center">1</span>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Go to console.anthropic.com</p>
-              <p className="text-xs text-gray-400">Sign in with your Google account or email — it's free</p>
-            </div>
-          </div>
-          <div className="flex gap-3 items-start">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-amber-500 text-white text-sm font-bold flex items-center justify-center">2</span>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Click "API Keys" → "Create Key"</p>
-              <p className="text-xs text-gray-400">Give it any name (like "Homework Helper") and copy the code it shows you</p>
-            </div>
-          </div>
-          <div className="flex gap-3 items-start">
-            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-amber-500 text-white text-sm font-bold flex items-center justify-center">3</span>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Come back here and paste it in</p>
-              <p className="text-xs text-gray-400">We save it in your browser — you'll never need to do this again</p>
-            </div>
-          </div>
-        </div>
-        <button onClick={() => setStep('paste')} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors mb-2">
-          I have my code — let me paste it →
-        </button>
-        <button onClick={onClose} className="w-full text-gray-400 text-sm py-2 hover:text-gray-600">
-          Not now — I'll use the topic browser
-        </button>
-      </div>
-    </div>
-  );
+  useEffect(() => {
+    if (!googleClientId || !window.google) return;
+    window.google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: (response) => {
+        onSignedIn(response.credential);
+      },
+    });
+    window.google.accounts.id.renderButton(btnRef.current, {
+      theme: 'outline',
+      size: 'large',
+      width: 280,
+      text: 'continue_with',
+    });
+  }, [googleClientId]);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full fade-up">
-        <button onClick={() => setStep('intro')} className="text-gray-400 text-sm mb-3 hover:text-gray-600">← Back</button>
-        <h2 className="text-lg font-bold text-gray-800 mb-1">Paste your code</h2>
-        <p className="text-gray-500 text-sm mb-4">It starts with <span className="font-mono bg-gray-100 px-1 rounded">sk-ant-</span></p>
-        <input
-          type="password"
-          value={key}
-          onChange={e => setKey(e.target.value)}
-          placeholder="sk-ant-api03-..."
-          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono focus:border-amber-400 focus:outline-none mb-3 transition-colors"
-          autoFocus
-        />
-        <button
-          onClick={() => valid && onSave(key.trim())}
-          disabled={!valid}
-          className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold py-3 rounded-xl transition-colors mb-2"
-        >{valid ? 'Save and ask Claude! 🎉' : 'Paste your code above'}</button>
-        <button onClick={onClose} className="w-full text-gray-400 text-sm py-1 hover:text-gray-600">Not now</button>
-        <p className="text-center text-xs text-gray-400 mt-3">🔒 Saved to your browser only. Never shared with anyone.</p>
+        <div className="text-4xl text-center mb-3">✨</div>
+        <h2 className="text-lg font-bold text-gray-800 text-center mb-2">One tap and you're in!</h2>
+        <p className="text-gray-500 text-sm text-center mb-6 leading-relaxed">
+          Sign in with your Google account to ask any math question and get a step-by-step explanation. It's completely free.
+        </p>
+        <div className="flex justify-center mb-4">
+          <div ref={btnRef}></div>
+        </div>
+        {!googleClientId && (
+          <p className="text-center text-xs text-red-400 mb-3">Sign-in is not configured yet.</p>
+        )}
+        <button onClick={onClose} className="w-full text-gray-400 text-sm py-2 hover:text-gray-600">
+          Not now — I'll use the topic browser
+        </button>
+        <p className="text-center text-xs text-gray-300 mt-3">We only use your Google account to verify you're a real person. Nothing is shared or stored.</p>
       </div>
     </div>
   );
@@ -607,7 +526,7 @@ function ApiKeyModal({ onSave, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCREENS
 // ─────────────────────────────────────────────────────────────────────────────
-function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
+function HomeScreen({ user, onGrade, onAsk, onSignIn }) {
   const [askGrade,    setAskGrade]    = useState(2);
   const [askQuestion, setAskQuestion] = useState('');
   const [askOpen,     setAskOpen]     = useState(false);
@@ -632,13 +551,13 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
 
   const handleAsk = () => {
     if (!askQuestion.trim() && !image) return;
-    if (!apiKey) { onSetupKey(); return; }
+    if (!user) { onSignIn(); return; }
     onAsk({ gradeIndex: askGrade, question: askQuestion.trim(), image });
   };
 
   const handlePhotoSubmit = () => {
     if (!image) return;
-    if (!apiKey) { onSetupKey(); return; }
+    if (!user) { onSignIn(); return; }
     onAsk({ gradeIndex: photoGrade, question: '', image });
   };
 
@@ -695,9 +614,9 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
             <button onClick={handlePhotoSubmit}
               className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2">
               <span>✨</span>
-              {!apiKey ? 'Get step-by-step guide (free setup required)' : 'Get step-by-step guide'}
+              {!user ? 'Get step-by-step guide (sign in with Google)' : 'Get step-by-step guide'}
             </button>
-            {!apiKey && <p className="text-center text-xs text-gray-400 mt-2">Takes 2 minutes to set up — we'll walk you through it</p>}
+            {!user && <p className="text-center text-xs text-gray-400 mt-2">One tap with your Google account — it's free</p>}
           </div>
         )}
 
@@ -733,7 +652,7 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
                 <h2 className="font-bold text-gray-800">Ask Claude anything</h2>
               </div>
               <div className="flex items-center gap-2">
-                {apiKey && <button onClick={onClearKey} className="text-xs text-gray-300 hover:text-gray-500 underline">disconnect</button>}
+                {user && <span className="text-xs text-green-400 font-medium">✓ signed in</span>}
                 <button onClick={() => setAskOpen(false)} className="text-gray-300 hover:text-gray-500 text-lg leading-none">×</button>
               </div>
             </div>
@@ -759,9 +678,9 @@ function HomeScreen({ apiKey, onGrade, onAsk, onSetupKey, onClearKey }) {
             />
             <button onClick={handleAsk} disabled={!askQuestion.trim()}
               className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold py-3 rounded-xl transition-colors">
-              {!apiKey ? 'Get explanation (free setup required)' : 'Get explanation'}
+              {!user ? 'Get explanation (sign in with Google)' : 'Get explanation'}
             </button>
-            {!apiKey && <p className="text-center text-xs text-gray-400 mt-2">Takes 2 minutes to set up — we'll walk you through it</p>}
+            {!user && <p className="text-center text-xs text-gray-400 mt-2">One tap with your Google account — it's free</p>}
           </div>
         )}
 
@@ -823,50 +742,70 @@ function ErrorScreen({ message, onBack }) {
 // APP
 // ─────────────────────────────────────────────────────────────────────────────
 function App() {
-  const [screen,     setScreen]     = useState('home');
-  const [gradeIndex, setGradeIndex] = useState(null);
-  const [topicIndex, setTopicIndex] = useState(null);
-  const [apiKey,     setApiKey]     = useState(() => localStorage.getItem('hw_api_key') || '');
-  const [showModal,  setShowModal]  = useState(false);
-  const [aiResult,   setAiResult]   = useState(null);
-  const [errMsg,     setErrMsg]     = useState('');
+  const [screen,         setScreen]         = useState('home');
+  const [gradeIndex,     setGradeIndex]     = useState(null);
+  const [topicIndex,     setTopicIndex]     = useState(null);
+  const [googleClientId, setGoogleClientId] = useState('');
+  const [user,           setUser]           = useState(null); // Google ID token credential string
+  const [showModal,      setShowModal]      = useState(false);
+  const [aiResult,       setAiResult]       = useState(null);
+  const [errMsg,         setErrMsg]         = useState('');
   const pendingAsk = useRef(null);
 
-  const saveKey = (k) => {
-    setApiKey(k);
-    localStorage.setItem('hw_api_key', k);
+  // Fetch the Google Client ID from our backend on first load
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(d => { if (d.googleClientId) setGoogleClientId(d.googleClientId); })
+      .catch(() => {});
+  }, []);
+
+  const handleSignedIn = (credential) => {
+    setUser(credential);
     setShowModal(false);
     if (pendingAsk.current) {
-      fireAsk({ ...pendingAsk.current, key: k });
+      fireAsk({ ...pendingAsk.current, credential });
       pendingAsk.current = null;
     }
   };
 
-  const fireAsk = async ({ gradeIndex, question, image, key }) => {
+  const fireAsk = async ({ gradeIndex, question, image, credential }) => {
     setScreen('loading');
     try {
-      const result = await askClaude({ apiKey: key || apiKey, gradeIndex, question, image });
+      const result = await callExplainAPI({ credential: credential || user, gradeIndex, question, image });
       setAiResult(result);
       setScreen('result');
     } catch (err) {
-      setErrMsg(err.message || 'Unknown error');
-      setScreen('error');
+      if (err.message === 'REAUTH') {
+        setUser(null);
+        setScreen('home');
+        setShowModal(true);
+      } else {
+        setErrMsg(err.message || 'Unknown error');
+        setScreen('error');
+      }
     }
   };
 
   const handleAsk = ({ gradeIndex, question, image }) => {
-    if (!apiKey) { pendingAsk.current = { gradeIndex, question, image }; setShowModal(true); return; }
+    if (!user) { pendingAsk.current = { gradeIndex, question, image }; setShowModal(true); return; }
     fireAsk({ gradeIndex, question, image });
   };
 
   return (
     <div>
-      {showModal && <ApiKeyModal onSave={saveKey} onClose={() => { setShowModal(false); pendingAsk.current = null; }} />}
-      {screen === 'home'    && <HomeScreen apiKey={apiKey} onGrade={(g) => { setGradeIndex(g); setScreen('topics'); }} onAsk={handleAsk} onSetupKey={() => setShowModal(true)} onClearKey={() => { setApiKey(''); localStorage.removeItem('hw_api_key'); }} />}
+      {showModal && (
+        <GoogleSignInModal
+          googleClientId={googleClientId}
+          onSignedIn={handleSignedIn}
+          onClose={() => { setShowModal(false); pendingAsk.current = null; }}
+        />
+      )}
+      {screen === 'home'    && <HomeScreen user={user} onGrade={(g) => { setGradeIndex(g); setScreen('topics'); }} onAsk={handleAsk} onSignIn={() => setShowModal(true)} />}
       {screen === 'topics'  && <TopicScreen gradeIndex={gradeIndex} onTopic={(t) => { setTopicIndex(t); setScreen('explain'); }} onBack={() => setScreen('home')} />}
       {screen === 'explain' && <ExplanationCards topic={TOPICS[gradeIndex][topicIndex]} onBack={() => setScreen('topics')} />}
       {screen === 'loading' && <LoadingScreen />}
-      {screen === 'result' && aiResult && <ExplanationCards topic={aiResult} onBack={() => setScreen('home')} />}
+      {screen === 'result'  && aiResult && <ExplanationCards topic={aiResult} onBack={() => setScreen('home')} />}
       {screen === 'error'   && <ErrorScreen message={errMsg} onBack={() => setScreen('home')} />}
     </div>
   );
